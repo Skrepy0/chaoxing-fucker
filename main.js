@@ -867,46 +867,50 @@
       return;
     }
 
-    // 2. 立即尝试内联
-    if (tryInsertInline()) {
-      cfMarkInserted();
-      return;
-    }
+    let inserted = false;
+    let intervalId = null;
 
-    // 3. 轮询 8 秒，每 500ms 一次
-    let attempts = 0;
-    const iv = setInterval(() => {
-      attempts++;
+    function checkAndInsert() {
+      if (inserted) return;
 
-      // 每次轮询先看看有没有别处已经插好了
+      // 如果其他 frame 已经插入，停止
       if (cfButtonExistsAnywhere()) {
-        clearInterval(iv);
+        inserted = true;
+        if (intervalId) clearInterval(intervalId);
         console.log("[chaoxing-fucker] 其他 frame 已插入按钮，停止轮询");
         return;
       }
 
-      if (tryInsertInline()) {
-        clearInterval(iv);
-        cfMarkInserted();
+      // 关键：先检测是否有题目
+      const questions = collectAllQuestions();
+      if (questions.length === 0) {
+        // 没有题目，不渲染按钮，继续等待
         return;
       }
 
-      if (attempts >= 16) {
-        clearInterval(iv);
-        // 8 秒内没找到 newTestTitle
-        // 30 秒内有人插过 → 跳过兜底
-        if (cfRecentlyMarked(30000)) {
-          console.log("[chaoxing-fucker] 最近有人插过按钮，跳过兜底");
-          return;
-        }
-        // 再等 3 秒，给其他 frame 最后的机会
-        setTimeout(() => {
-          if (cfButtonExistsAnywhere()) return;
-          if (cfRecentlyMarked(30000)) return;
-          tryInsertFallback();
-          cfMarkInserted();
-        }, 3000);
+      // 有题目，开始插入按钮
+      if (tryInsertInline()) {
+        cfMarkInserted();
+        inserted = true;
+        if (intervalId) clearInterval(intervalId);
+        console.log("[chaoxing-fucker] 检测到题目，已插入内联按钮");
+        return;
       }
-    }, 500);
+
+      // 内联失败，插入兜底按钮
+      tryInsertFallback();
+      cfMarkInserted();
+      inserted = true;
+      if (intervalId) clearInterval(intervalId);
+      console.log("[chaoxing-fucker] 检测到题目，已插入兜底按钮");
+    }
+
+    // 立即检查一次
+    checkAndInsert();
+
+    // 如果还没插入，启动轮询（每 1 秒检查一次，可自行调整）
+    if (!inserted) {
+      intervalId = setInterval(checkAndInsert, 1000);
+    }
   }
 })();

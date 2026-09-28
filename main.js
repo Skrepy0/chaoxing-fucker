@@ -2,10 +2,10 @@
 // @name         chaoxing-fucker
 // @namespace    https://github.com/Skrepy0/chaoxing-fucker
 // @supportURL   https://github.com/Skrepy0/chaoxing-fucker/issues
-// @source     	 https://github.com/Skrepy0/chaoxing-fucker
+// @source       https://github.com/Skrepy0/chaoxing-fucker
 // @icon         https://mooc1.chaoxing.com/favicon.ico
-// @version      1.0
-// @description  阻止超星鼠标离开/切标签/最小化暂停 + 自动静音 + 自动答弹题 + 自动跳转下一节
+// @version      1.1
+// @description  阻止超星鼠标离开/切标签/最小化暂停 + 自动静音 + 自动答弹题 + 自动跳转下一节 + 一键复制题目
 // @author       Skrepy
 // @match        *://*.chaoxing.com/*
 // @match        *://*.edu.cn/*
@@ -16,6 +16,7 @@
 (function () {
   "use strict";
 
+  // ============ 工具函数 ============
   function isVisible(el) {
     if (!el || !el.isConnected) return false;
     const win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
@@ -53,6 +54,7 @@
     return null;
   }
 
+  // ============ 第〇层：阉割 HTMLMediaElement.pause ============
   try {
     const origPause = HTMLMediaElement.prototype.pause;
     Object.defineProperty(HTMLMediaElement.prototype, "__cfOriginalPause", {
@@ -67,6 +69,7 @@
     console.warn("[chaoxing-fucker] 拦截 pause 失败:", e);
   }
 
+  // ============ 第〇.五层：自动静音 ============
   try {
     const proto = HTMLMediaElement.prototype;
     const mutedDesc = Object.getOwnPropertyDescriptor(proto, "muted");
@@ -86,9 +89,7 @@
       get: function () {
         return true;
       },
-      set: function () {
-        /* 忽略，永远静音 */
-      },
+      set: function () {},
       configurable: true,
     });
 
@@ -96,9 +97,7 @@
       get: function () {
         return 0;
       },
-      set: function () {
-        /* 忽略，永远静音 */
-      },
+      set: function () {},
       configurable: true,
     });
 
@@ -121,6 +120,7 @@
     console.warn("[chaoxing-fucker] 自动静音初始化失败:", e);
   }
 
+  // ============ 第一层：拦截事件监听器 ============
   const BLOCKED_EVENTS = new Set([
     "mouseout",
     "mouseleave",
@@ -128,6 +128,7 @@
     "focusout",
     "visibilitychange",
     "pagehide",
+    "unload",
   ]);
   const originalAddEventListener = EventTarget.prototype.addEventListener;
   EventTarget.prototype.addEventListener = function (type, listener, options) {
@@ -163,6 +164,7 @@
     } catch (e) {}
   });
 
+  // ============ 第二层：伪造可见性与焦点 ============
   [
     "visibilityState",
     "webkitVisibilityState",
@@ -192,7 +194,9 @@
     });
   } catch (e) {}
 
+  // ============ 主逻辑 ============
   window.addEventListener("load", function () {
+    // ---- 第三层：劫持 ananas.pause ----
     function hijackPlayerPause() {
       if (window.ananas && typeof window.ananas.pause === "function") {
         window.ananas.pause = function () {
@@ -204,6 +208,7 @@
     setTimeout(hijackPlayerPause, 1000);
     setTimeout(hijackPlayerPause, 3000);
 
+    // ---- 恢复播放 + 强制静音 ----
     function resumeAllVideos() {
       const quizVisible = Array.from(
         document.querySelectorAll(".ans-videoquiz"),
@@ -230,6 +235,7 @@
 
     setInterval(resumeAllVideos, 800);
 
+    // ---- Web Worker 定时器：绕过后台标签节流 ----
     try {
       const workerCode =
         'setInterval(function(){ postMessage("tick"); }, 700);';
@@ -246,6 +252,7 @@
       console.warn("[chaoxing-fucker] Worker 创建失败，退回主线程定时器:", e);
     }
 
+    // ---- 第四层：自动处理弹题 ----
     const quizAttempts = new Map();
     const processingQuizzes = new WeakSet();
 
@@ -319,9 +326,14 @@
     }
     setInterval(autoAnswerQuiz, 1000);
 
+    // ---- 第五层：自动跳转下一节 ----
     initAutoAdvance();
+
+    // ---- 第六层：一键复制题目 ----
+    initCopyButton();
   });
 
+  // ============ 自动跳转下一节 ============
   function initAutoAdvance() {
     const SS_KEY = "cf_auto_advance_state";
     const MAX_CLICKS = 30;
@@ -466,6 +478,435 @@
       }
     }, 3000);
 
-    console.log("[chaoxing-fucker] 已启动");
+    console.log(
+      "[chaoxing-fucker] 已启动：防暂停(含后台) + 自动静音 + 自动弹题 + 自动跳转下一节",
+    );
+  }
+
+  // ============ 第六层：一键复制题目（字形哈希解密）============
+
+  // ============ 第六层：一键复制题目 ============
+
+  // ---------- 题目提取 ----------
+  function extractQuestionsFromDoc(doc) {
+    const results = [];
+    if (!doc || !doc.body) return results;
+
+    const containerSelectors = [
+      ".TiMu",
+      ".question-item",
+      ".questionLi",
+      ".ans-que",
+      ".subject-item",
+      ".questionItem",
+      '[class*="question-item"]',
+      '[class*="TiMu"]',
+    ];
+    let containers = [];
+    for (const sel of containerSelectors) {
+      try {
+        const found = doc.querySelectorAll(sel);
+        if (found.length > 0) {
+          containers = Array.from(found);
+          break;
+        }
+      } catch (e) {}
+    }
+    if (containers.length === 0) return results;
+
+    containers.forEach((container) => {
+      try {
+        const titleSelectors = [
+          ".Zy_TItle",
+          ".question-title",
+          ".TiMu_title",
+          ".question-content",
+          ".title-content",
+          ".mark_name",
+        ];
+        let titleText = "";
+        for (const sel of titleSelectors) {
+          const el = container.querySelector(sel);
+          if (el) {
+            const t = (el.textContent || "").trim().replace(/\s+/g, " ");
+            if (t) {
+              titleText = t;
+              break;
+            }
+          }
+        }
+        if (!titleText) {
+          const children = container.querySelectorAll("*");
+          for (const child of children) {
+            const t = (child.textContent || "").trim();
+            if (t && t.length > 5 && t.length < 500) {
+              titleText = t.replace(/\s+/g, " ");
+              break;
+            }
+          }
+        }
+        if (!titleText) return;
+        titleText = titleText.replace(/^\d+[、.．)]\s*/, "");
+
+        const optionSelectors = [
+          ".Zy_ulTop",
+          ".option-list",
+          ".question-options",
+          ".ans-option-list",
+          ".option-list-wrap",
+        ];
+        let optionList = null;
+        for (const sel of optionSelectors) {
+          const el = container.querySelector(sel);
+          if (el) {
+            optionList = el;
+            break;
+          }
+        }
+        let options = [];
+        if (optionList) {
+          const items = optionList.querySelectorAll(
+            "li, .option-item, .ans-option",
+          );
+          options = Array.from(items)
+            .map((li) => (li.textContent || "").trim().replace(/\s+/g, " "))
+            .filter((t) => t);
+        } else {
+          const uls = container.querySelectorAll("ul");
+          for (const ul of uls) {
+            const items = ul.querySelectorAll("li");
+            if (items.length >= 2) {
+              options = Array.from(items)
+                .map((li) => (li.textContent || "").trim().replace(/\s+/g, " "))
+                .filter((t) => t);
+              break;
+            }
+          }
+        }
+
+        function stripOptionPrefix(s) {
+          let t = (s || "").replace(/\s+/g, " ").trim();
+          let guard = 0;
+          while (guard++ < 5) {
+            const before = t;
+            t = t.replace(/^[A-Za-z]\s*[、.．)）:：]\s*/, "").trim();
+            if (t === before)
+              t = t.replace(/^[A-Za-z]\s+(?=[^\sA-Za-z])/, "").trim();
+            if (t === before) break;
+          }
+          return t;
+        }
+
+        const body = [titleText];
+        const seenOpts = new Set();
+        options.forEach((opt) => {
+          const cleaned = stripOptionPrefix(opt);
+          if (!cleaned || seenOpts.has(cleaned)) return;
+          seenOpts.add(cleaned);
+          const idx = body.length - 1;
+          body.push(`${String.fromCharCode(65 + idx)}. ${cleaned}`);
+        });
+
+        if (body.length > 0) results.push(body.join("\n"));
+      } catch (e) {
+        console.warn("[chaoxing-fucker] 提取题目出错:", e);
+      }
+    });
+    return results;
+  }
+
+  function collectAllQuestions() {
+    const all = [];
+    const seen = new Set();
+    function walk(win) {
+      let doc;
+      try {
+        doc = win.document;
+        if (!doc || seen.has(doc)) return;
+        seen.add(doc);
+      } catch (e) {
+        return;
+      }
+      try {
+        all.push(...extractQuestionsFromDoc(doc));
+      } catch (e) {}
+      try {
+        doc.querySelectorAll("iframe").forEach((iframe) => {
+          try {
+            if (iframe.contentWindow) walk(iframe.contentWindow);
+          } catch (e) {}
+        });
+      } catch (e) {}
+    }
+    try {
+      walk(window.top || window);
+    } catch (e) {
+      walk(window);
+    }
+    return all;
+  }
+
+  async function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (e) {}
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.cssText = "position:fixed;left:-9999px;top:0;";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ---------- 按钮 ----------
+  function createCopyButton(inline) {
+    const host = document.createElement("span");
+    host.id = "cf-copy-btn-host";
+    host.style.cssText = inline
+      ? "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:10;display:inline-block;pointer-events:auto;"
+      : "all:initial;position:fixed;right:20px;bottom:150px;z-index:2147483647;";
+
+    const defaultText = inline ? "📋 复制题目" : "📋 复制全部题目";
+
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = `
+      <style>
+        .cf-btn {
+          padding: ${inline ? "4px 12px" : "10px 18px"};
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: #fff;
+          border: none;
+          border-radius: ${inline ? "6px" : "8px"};
+          cursor: pointer;
+          font-size: ${inline ? "13px" : "14px"};
+          font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+          box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+          transition: transform 0.15s ease, box-shadow 0.15s ease,
+                      opacity 0.15s, background 0.2s ease;
+          user-select: none;
+          font-weight: 500;
+          letter-spacing: 0.3px;
+          line-height: 1.4;
+          white-space: nowrap;
+          min-width: ${inline ? "104px" : "150px"};
+          box-sizing: border-box;
+          text-align: center;
+        }
+        .cf-btn:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(102, 126, 234, 0.55);
+        }
+        .cf-btn:active:not(:disabled) { transform: translateY(0); }
+        .cf-btn:disabled { opacity: 0.8; cursor: wait; }
+        .cf-btn.cf-success {
+          background: linear-gradient(135deg, #43a047 0%, #2e7d32 100%);
+          box-shadow: 0 2px 8px rgba(67, 160, 71, 0.4);
+        }
+        .cf-btn.cf-error {
+          background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+          box-shadow: 0 2px 8px rgba(229, 57, 53, 0.4);
+        }
+      </style>
+      <button class="cf-btn" type="button">${defaultText}</button>
+    `;
+
+    const btn = shadow.querySelector(".cf-btn");
+    let restoreTimer = null;
+
+    function setButtonText(text, state, duration) {
+      if (restoreTimer) {
+        clearTimeout(restoreTimer);
+        restoreTimer = null;
+      }
+      btn.textContent = text;
+      btn.classList.remove("cf-success", "cf-error");
+      if (state === "success") btn.classList.add("cf-success");
+      else if (state === "error") btn.classList.add("cf-error");
+      if (duration && duration > 0) {
+        restoreTimer = setTimeout(() => {
+          btn.textContent = defaultText;
+          btn.classList.remove("cf-success", "cf-error");
+          restoreTimer = null;
+        }, duration);
+      }
+    }
+
+    btn.addEventListener("click", async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      setButtonText("⏳ 提取中…", null, 0);
+
+      try {
+        const questions = collectAllQuestions();
+
+        if (questions.length === 0) {
+          setButtonText("❌ 未找到题目", "error", 5000);
+        } else {
+          const text = questions.join("\n\n");
+          const ok = await copyToClipboard(text);
+          if (ok) {
+            setButtonText(`✅ 已复制 ${questions.length} 道`, "success", 5000);
+          } else {
+            setButtonText("❌ 复制失败", "error", 5000);
+            console.log("[chaoxing-fucker] 提取的题目内容：\n" + text);
+          }
+        }
+      } catch (e) {
+        console.error("[chaoxing-fucker] 复制题目失败:", e);
+        setButtonText("❌ 出错", "error", 5000);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    return host;
+  }
+
+  function findNewTestTitle() {
+    const selectors = [
+      "#newTestTitle",
+      ".newTestTitle",
+      '[id*="newTestTitle"]',
+      '[class*="newTestTitle"]',
+    ];
+    for (const sel of selectors) {
+      try {
+        const el = document.querySelector(sel);
+        if (el) return el;
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  // ---------- 按钮去重 ----------
+  const CF_BTN_MARK = "cf_btn_inserted_at";
+  const CF_BTN_TTL = 60000; // 标记有效期 60 秒
+
+  // 检查"任何可见 frame"是否已有按钮
+  function cfButtonExistsAnywhere() {
+    // 自己
+    if (document.getElementById("cf-copy-btn-host")) return true;
+    // parent / top（跨域会抛，吞掉）
+    for (const w of [window.parent, window.top]) {
+      if (!w || w === window) continue;
+      try {
+        if (w.document && w.document.getElementById("cf-copy-btn-host"))
+          return true;
+      } catch (e) {}
+    }
+    // 所有同源子 iframe
+    try {
+      for (const f of document.querySelectorAll("iframe")) {
+        try {
+          if (
+            f.contentDocument &&
+            f.contentDocument.getElementById("cf-copy-btn-host")
+          )
+            return true;
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function cfMarkInserted() {
+    try {
+      sessionStorage.setItem(CF_BTN_MARK, String(Date.now()));
+    } catch (e) {}
+  }
+  function cfRecentlyMarked(ms) {
+    try {
+      const t = +sessionStorage.getItem(CF_BTN_MARK) || 0;
+      return Date.now() - t < (ms || CF_BTN_TTL);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function tryInsertInline() {
+    if (cfButtonExistsAnywhere()) return true;
+    const title = findNewTestTitle();
+    if (!title) return false;
+    try {
+      const cs = window.getComputedStyle(title);
+      if (cs.position === "static") title.style.position = "relative";
+    } catch (e) {}
+    const btn = createCopyButton(true);
+    try {
+      title.appendChild(btn);
+    } catch (e) {
+      return false;
+    }
+    console.log("[chaoxing-fucker] 复制按钮已插入 newTestTitle");
+    return true;
+  }
+
+  function tryInsertFallback() {
+    if (cfButtonExistsAnywhere()) return;
+    if (!document.body) return;
+    const btn = createCopyButton(false);
+    document.body.appendChild(btn);
+    console.log("[chaoxing-fucker] 未找到 newTestTitle，已插入右下角兜底按钮");
+  }
+
+  function initCopyButton() {
+    // 1. 任何 frame 已有按钮 → 立即退出
+    if (cfButtonExistsAnywhere()) {
+      console.log("[chaoxing-fucker] 检测到已有按钮，跳过");
+      return;
+    }
+
+    // 2. 立即尝试内联
+    if (tryInsertInline()) {
+      cfMarkInserted();
+      return;
+    }
+
+    // 3. 轮询 8 秒，每 500ms 一次
+    let attempts = 0;
+    const iv = setInterval(() => {
+      attempts++;
+
+      // 每次轮询先看看有没有别处已经插好了
+      if (cfButtonExistsAnywhere()) {
+        clearInterval(iv);
+        console.log("[chaoxing-fucker] 其他 frame 已插入按钮，停止轮询");
+        return;
+      }
+
+      if (tryInsertInline()) {
+        clearInterval(iv);
+        cfMarkInserted();
+        return;
+      }
+
+      if (attempts >= 16) {
+        clearInterval(iv);
+        // 8 秒内没找到 newTestTitle
+        // 30 秒内有人插过 → 跳过兜底
+        if (cfRecentlyMarked(30000)) {
+          console.log("[chaoxing-fucker] 最近有人插过按钮，跳过兜底");
+          return;
+        }
+        // 再等 3 秒，给其他 frame 最后的机会
+        setTimeout(() => {
+          if (cfButtonExistsAnywhere()) return;
+          if (cfRecentlyMarked(30000)) return;
+          tryInsertFallback();
+          cfMarkInserted();
+        }, 3000);
+      }
+    }, 500);
   }
 })();
